@@ -2002,6 +2002,61 @@ static func form_ranks(cos: Array) -> void:
 			g[i]["depth"] = float(RANK_DEPTH[r])
 
 
+## Musterbook's order of battle: each company stands where it was put - a wing (Left, Centre, Right,
+## from its own side) and a line (Front, Second, Reserve). Companies sharing a place stand side by
+## side, three abreast, more stacking behind; horse take the outside of a wing.
+const WING_X := {"Left": 30.0, "Centre": 0.0, "Right": -30.0}
+const LINE_DEPTH := {"Front": 0.0, "Second": 15.0}
+const ABREAST := 13.0
+
+
+static func form_positions(cos: Array) -> void:
+	var groups := {}
+	var keys := []
+	for co in cos:
+		var line := String(co.get("line", "Front"))
+		var wing := String(co.get("wing", "Centre"))
+		if not WING_X.has(wing):
+			wing = "Centre"
+		if line == "Reserve":
+			co["slot"] = "Reserve"
+			co["rank"] = "Held back"
+			co.erase("band")
+			co["depth"] = 0.0
+			continue
+		if not LINE_DEPTH.has(line):
+			line = "Front"
+		var key := wing + "|" + line
+		if not groups.has(key):
+			groups[key] = []
+			keys.append(key)
+		groups[key].append(co)
+	for key in keys:
+		var wing: String = key.split("|")[0]
+		var line: String = key.split("|")[1]
+		var g: Array = groups[key]
+		# horse to the outside of its wing: first (furthest left) on the left, last on the right
+		var horse := g.filter(func(co): return Kit.is_mounted(String(co.get("type_name", ""))))
+		var foot := g.filter(func(co): return not Kit.is_mounted(String(co.get("type_name", ""))))
+		# pikes in the middle of the foot, shot on either side of them
+		var pikes := foot.filter(func(co): return String(co.get("type_name", "")) in ["Pikeman", "Pike and shot"])
+		var shot := foot.filter(func(co): return not String(co.get("type_name", "")) in ["Pikeman", "Pike and shot"])
+		var half := (shot.size() + 1) / 2
+		foot = shot.slice(0, half) + pikes + shot.slice(half)
+		if wing == "Left":
+			g = horse + foot
+		else:
+			g = foot + horse
+		var across := mini(g.size(), 3)
+		for i in g.size():
+			var col := i % across
+			var row := i / across
+			g[i]["band"] = float(WING_X[wing]) + (float(across - 1) * 0.5 - float(col)) * ABREAST
+			g[i]["depth"] = float(LINE_DEPTH[line]) + 9.0 * float(row)
+			g[i]["slot"] = "%s %s %d" % [wing, line, i]
+			g[i]["rank"] = "Front" if line == "Front" and row == 0 else "Back"
+
+
 ## Kept for older callers: the order of battle by type.
 static func spread_front(cos: Array) -> void:
 	form_ranks(cos)

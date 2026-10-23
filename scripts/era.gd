@@ -75,6 +75,62 @@ const BATTLES := 10
 const LETTERS := ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]
 
 
+## Musterbook's shop: what a company of each type fights by until you give it other orders.
+const DEFAULT_DRILL := {"Musketeer": "Shot", "Firelock": "Shot", "Pikeman": "Pike Block", "Pike and shot": "Pike and Shot",
+	"Archer": "Archers", "Clubman": "Clubmen", "Dragoon": "Dragoons", "Harquebusier": "Charge Home", "Cuirassier": "Caracole",
+	"Hussar": "Lance Charge", "Saker": "Artillery"}
+const SHORT := {"Musketeer": "matchlock shot", "Firelock": "flintlock shot, fewer misfires", "Pikeman": "16-ft pike - stops horse",
+	"Pike and shot": "pikes in the middle, shot on the sleeves", "Archer": "longbows: quick, far, weak on armour", "Clubman": "cheap levies with bills",
+	"Dragoon": "mounted shot", "Harquebusier": "the common horse: pistols and sword", "Cuirassier": "armoured heavy horse",
+	"Hussar": "winged lancers: a shattering first charge", "Saker": "field guns"}
+
+## Where a company stands: its wing (from your own side, facing the enemy) and its line.
+const WINGS := ["Left", "Centre", "Right"]
+const LINES := ["Front", "Second", "Reserve"]
+const LINE_HELP := {"Front": "the first line, where the fighting starts", "Second": "fifteen paces behind the front: shooters fire past it, and it fills the gaps",
+	"Reserve": "held back; the captain sends it in where the line goes worst or after a running enemy"}
+
+
+## Drawing up by the book, for the companies going in (by type, in order): horse on the wings of
+## the front, dragoons on the wings behind, guns in the centre behind, archers behind, the foot in
+## the front across all three wings with the pikes in the middle. [[wing, line], ...]
+static func draw_up(types_in: Array) -> Array:
+	var out := []
+	var side := 0
+	var foot := 0
+	var back := 0
+	var foot_order := ["Centre", "Left", "Right"]
+	var pikes_first := []
+	for i in types_in.size():
+		out.append(["Centre", "Front"])
+	# foot: pikes first so they take the centre, then the rest round the wings
+	var foot_idx := []
+	for i in types_in.size():
+		var tn := String(types_in[i])
+		if tn in ["Pikeman", "Pike and shot"]:
+			pikes_first.append(i)
+		elif tn in ["Musketeer", "Firelock", "Clubman"]:
+			foot_idx.append(i)
+	foot_idx = pikes_first + foot_idx
+	for i in types_in.size():
+		var tn := String(types_in[i])
+		if tn in ["Harquebusier", "Cuirassier", "Hussar"]:
+			out[i] = ["Left" if side % 2 == 0 else "Right", "Front"]
+			side += 1
+		elif tn == "Dragoon":
+			out[i] = ["Left" if side % 2 == 0 else "Right", "Second"]
+			side += 1
+		elif tn == "Saker":
+			out[i] = ["Centre", "Second"]
+		elif tn == "Archer":
+			out[i] = [["Left", "Centre", "Right"][back % 3], "Second"]
+			back += 1
+	for i in foot_idx:
+		out[i] = [foot_order[foot % 3], "Front"]
+		foot += 1
+	return out
+
+
 ## The drills shown for an era: its own, and the drills that suit any war.
 static func drill_ok(d: Drill, era: String) -> bool:
 	if d == null:

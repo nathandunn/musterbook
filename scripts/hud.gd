@@ -507,13 +507,13 @@ func show_start() -> void:
 		title.add_theme_font_size_override("font_size", 34)
 		vb.add_child(title)
 		var sub := Label.new()
-		sub.text = "Raise twenty companies of pike and shot on a budget.\nWin a war of ten battles with them - there are no recruits.\nBefore each battle choose who goes in (up to ten) and their orders."
+		sub.text = "Shop for up to twenty companies of pike and shot on a budget.\nWin a war of ten battles with them - there are no recruits.\nBefore each battle draw up who goes in (up to ten): where they stand and their orders."
 		sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		sub.add_theme_font_size_override("font_size", 15)
 		sub.add_theme_color_override("font_color", Color(0.85, 0.84, 0.78))
 		vb.add_child(sub)
 		var choices := [
-			["» Raise your army", "Pick a period army and change any company within your money, wages and food for the days in the field", func(): open_setup("Raise your army: twenty companies within the money. Then » Start the war.")],
+			["» Raise your army", "Shop for your companies within your money, wages and food for the days in the field", func(): open_setup("Fill your basket - up to twenty companies within the money. Then » Start the war.")],
 			["» Go to war", "Straight in with the armies as they stand (yours: the Swedish brigade; the computer's: the New Model Army)", func(): campaign_requested.emit()],
 			["» Practice battle", "One battle on a field of your choosing, nothing lost - try troops and orders before a war", func(): show_pick()],
 		]
@@ -535,7 +535,7 @@ func show_start() -> void:
 
 
 func _build_teams_overlay() -> void:
-	var parts := _overlay("Armies")
+	var parts := _overlay("Raise your army")
 	teams_overlay = parts[0]
 	var box: VBoxContainer = parts[1]
 	_setup_scroll = box.get_parent() as ScrollContainer
@@ -546,7 +546,7 @@ func _build_teams_overlay() -> void:
 	_setup_note.visible = false
 	box.add_child(_setup_note)
 	var note := Label.new()
-	note.text = "Raise twenty companies within your money. They are all you get for the war - point at anything for what it means."
+	note.text = "Buy up to twenty companies within your money - they are all you get for the war. Where they stand and their orders come later, before each battle."
 	_hover(note, "Each army is twelve companies. Make each one here: its drill (how it fights - written rules for when to fire, charge, take cover and give ground) and its type (what its men are good at). Before every battle you only choose which companies go in; they line up by themselves, left to right in letter order, and a fifth and more form a second line.")
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_font_size_override("font_size", 13)
@@ -702,6 +702,9 @@ func _fill_side(t: int) -> void:
 	var vb: VBoxContainer = _side_box[t]
 	for ch in vb.get_children():
 		ch.queue_free()
+	if String(game.era) == "1640s":
+		_fill_shop(t, vb)
+		return
 	var name_l := Label.new()
 	name_l.text = "%s army" % MatchManager.TEAM_NAMES[t]
 	name_l.add_theme_font_size_override("font_size", 18)
@@ -751,6 +754,134 @@ func _fill_side(t: int) -> void:
 	vb.add_child(ed)
 	_editor_box[t] = ed
 	_fill_editor(t)
+	_cursor_for_tree(vb)
+
+
+## Musterbook's shop: one side at a time, a basket of companies bought by type within the money.
+var _shop_side := 0
+
+
+func _fill_shop(t: int, vb: VBoxContainer) -> void:
+	var frame := vb.get_parent() as Control
+	frame.visible = t == _shop_side
+	if t != _shop_side:
+		return
+	var raised: bool = campaign_on
+	var locked := _locked(t)
+	# whose basket
+	var sw := HFlowContainer.new()
+	vb.add_child(sw)
+	var swl := Label.new()
+	swl.text = "Shopping for: "
+	swl.add_theme_font_size_override("font_size", 14)
+	sw.add_child(swl)
+	for k in 2:
+		var who := "you" if String(commanders[k]) == "you" else "the computer"
+		var b := _chip("%s (%s)" % [MatchManager.TEAM_NAMES[k], who], k == t)
+		var kk := k
+		b.pressed.connect(func(): _shop_side = kk; refresh_setup())
+		sw.add_child(b)
+	var crow := HFlowContainer.new()
+	vb.add_child(crow)
+	var cl := Label.new()
+	cl.text = "%s is commanded by: " % MatchManager.TEAM_NAMES[t]
+	cl.add_theme_font_size_override("font_size", 13)
+	crow.add_child(cl)
+	for who in ["you", "computer"]:
+		var b := _chip("You" if who == "you" else "Computer", commanders[t] == who)
+		b.disabled = raised
+		b.pressed.connect(func(): _set_commander(t, who); refresh_setup())
+		crow.add_child(b)
+	if raised:
+		_small(vb, "Raised for the war: the shop is shut until it is over. Where each company stands and its orders are set before every battle.")
+	elif String(commanders[t]) == "computer":
+		_small(vb, "In a war the computer goes shopping for itself; this basket is only for practice battles.")
+	# the purse
+	_fill_muster(t, vb, locked)
+	# a famous army to start from
+	var frow := HFlowContainer.new()
+	vb.add_child(frow)
+	var ob := OptionButton.new()
+	ob.add_theme_font_size_override("font_size", 14)
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.custom_minimum_size = Vector2(0, 40)
+	ob.add_item("Fill with a famous army…")
+	var k2 := 1
+	for an in Era.ARMIES:
+		ob.add_item(an)
+		ob.set_item_tooltip(k2, String(Era.ARMY_HELP.get(an, "")))
+		if String(game.army_names[t]) == an:
+			ob.select(k2)
+		k2 += 1
+	ob.disabled = raised
+	ob.item_selected.connect(func(sel: int):
+		if sel > 0:
+			game.fill_army_within(t, ob.get_item_text(sel))
+			refresh_setup())
+	frow.add_child(ob)
+	var empty := _button("Empty the basket")
+	empty.custom_minimum_size = Vector2(0, 40)
+	empty.disabled = raised or (game.armies[t] as Array).is_empty()
+	empty.pressed.connect(func(): game.cart_clear(t); refresh_setup())
+	frow.add_child(empty)
+	# the shelves
+	var sh := Label.new()
+	sh.text = "The shop - price of one company for %d days" % int(game.days[t])
+	sh.add_theme_font_size_override("font_size", 16)
+	sh.add_theme_color_override("font_color", MatchManager.TEAM_COLORS[t].lightened(0.5))
+	vb.add_child(sh)
+	for tn in Era.TYPES_1640:
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		vb.add_child(row)
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info.add_theme_constant_override("separation", 0)
+		row.add_child(info)
+		var nl := Label.new()
+		nl.text = "%s  ·  %s" % [tn, Kit.pounds(game.company_price(t, tn))]
+		nl.add_theme_font_size_override("font_size", 15)
+		nl.mouse_filter = Control.MOUSE_FILTER_STOP
+		nl.tooltip_text = SoldierType.help(tn, tn)
+		info.add_child(nl)
+		var dl := Label.new()
+		dl.text = "%d men · %s" % [SoldierType.men_for(tn, int(game.COMPANY_MEN)), String(Era.SHORT.get(tn, ""))]
+		dl.add_theme_font_size_override("font_size", 12)
+		dl.add_theme_color_override("font_color", Color(0.72, 0.72, 0.66))
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		info.add_child(dl)
+		var n: int = game.cart_count(t, tn)
+		var minus := _button("−")
+		minus.custom_minimum_size = Vector2(44, 40)
+		minus.disabled = raised or n == 0
+		minus.pressed.connect(func(): game.cart_remove(t, tn); refresh_setup())
+		row.add_child(minus)
+		var cnt := Label.new()
+		cnt.text = str(n)
+		cnt.custom_minimum_size = Vector2(28, 0)
+		cnt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cnt.add_theme_font_size_override("font_size", 18)
+		if n > 0:
+			cnt.add_theme_color_override("font_color", Color(0.95, 0.85, 0.45))
+		row.add_child(cnt)
+		var plus := _button("+")
+		plus.custom_minimum_size = Vector2(44, 40)
+		plus.disabled = not game.can_buy(t, tn)
+		if not raised and plus.disabled:
+			plus.tooltip_text = "Twenty companies is the most" if (game.armies[t] as Array).size() >= Era.COMPANIES else "Not enough money left"
+		plus.pressed.connect(func(): game.cart_add(t, tn); refresh_setup())
+		row.add_child(plus)
+	# the basket
+	var ar: Array = game.armies[t]
+	var bl := Label.new()
+	bl.add_theme_font_size_override("font_size", 15)
+	bl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if ar.is_empty():
+		bl.text = "The basket is empty - buy at least one company."
+		bl.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
+	else:
+		bl.text = "In the basket: %d of up to %d companies (%s to %s)" % [ar.size(), Era.COMPANIES, ar[0]["name"], ar[ar.size() - 1]["name"]]
+	vb.add_child(bl)
 	_cursor_for_tree(vb)
 
 
@@ -829,6 +960,10 @@ func _budget_blocks() -> bool:
 	if game == null or String(game.era) != "1640s":
 		return false
 	for t in 2:
+		if (game.armies[t] as Array).is_empty():
+			_setup_note.text = "The %s basket is empty - buy at least one company." % MatchManager.TEAM_NAMES[t]
+			_setup_note.visible = true
+			return true
 		if game.over_budget(t):
 			_setup_note.text = "The %s army is over budget - the paymaster will not sign it. Disband a company, buy cheaper troops, cut the days in the field or the rations." % MatchManager.TEAM_NAMES[t]
 			_setup_note.visible = true
@@ -1150,6 +1285,170 @@ func _orders_rows(t: int, ar: Array) -> void:
 		grid.add_child(ob)
 
 
+## Musterbook's drawing up: who goes in, where each stands (wing and line) and its orders, with a
+## picture of the order of battle as the enemy will meet it.
+const ABBR := {"Musketeer": "Shot", "Firelock": "Flint", "Pikeman": "Pike", "Pike and shot": "P&S", "Archer": "Bows",
+	"Clubman": "Clubs", "Dragoon": "Drag", "Harquebusier": "Horse", "Cuirassier": "Cuir", "Hussar": "Huss", "Saker": "Guns"}
+
+
+func _draw_up_block(t: int, ar: Array) -> void:
+	var qrow := HFlowContainer.new()
+	_pick_box.add_child(qrow)
+	var fresh := _chip("A balanced ten", false)
+	fresh.tooltip_text = "Send in ten in the proportions of your whole army - the freshest company of each type first"
+	fresh.pressed.connect(func():
+		game.balanced_picks(t, Era.PICK)
+		game._redraw_if_auto(t)
+		show_pick())
+	qrow.add_child(fresh)
+	var book := _chip("Draw up by the book", not bool(game.hand_drawn[t]))
+	book.tooltip_text = "Horse on the wings, pikes in the centre with shot either side, dragoons, archers and guns in the second line. It redraws whenever you send companies in or out - until you move one yourself."
+	book.pressed.connect(func():
+		game.hand_drawn[t] = false
+		game.draw_up(t)
+		show_pick())
+	qrow.add_child(book)
+	# the picture: three wings by three lines, the enemy at the top
+	var pic := PanelContainer.new()
+	var psb := StyleBoxFlat.new()
+	psb.bg_color = Color(0.16, 0.22, 0.13, 0.85)
+	psb.set_corner_radius_all(6)
+	psb.content_margin_left = 6
+	psb.content_margin_right = 6
+	psb.content_margin_top = 4
+	psb.content_margin_bottom = 6
+	pic.add_theme_stylebox_override("panel", psb)
+	_pick_box.add_child(pic)
+	var pv := VBoxContainer.new()
+	pic.add_child(pv)
+	var enemy := Label.new()
+	enemy.text = "▲  the enemy  ▲"
+	enemy.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	enemy.add_theme_font_size_override("font_size", 12)
+	enemy.add_theme_color_override("font_color", MatchManager.TEAM_COLORS[1 - t].lightened(0.3))
+	pv.add_child(enemy)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 4)
+	grid.add_theme_constant_override("v_separation", 4)
+	pv.add_child(grid)
+	grid.add_child(Control.new())
+	for w in Era.WINGS:
+		var wl := Label.new()
+		wl.text = w
+		wl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		wl.add_theme_font_size_override("font_size", 12)
+		grid.add_child(wl)
+	for ln in Era.LINES:
+		var ll := Label.new()
+		ll.text = ln
+		ll.add_theme_font_size_override("font_size", 12)
+		ll.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ll.custom_minimum_size = Vector2(52, 0)
+		_hover(ll, String(Era.LINE_HELP[ln]))
+		grid.add_child(ll)
+		for w in Era.WINGS:
+			var cell := PanelContainer.new()
+			var csb := StyleBoxFlat.new()
+			csb.bg_color = Color(0.08, 0.1, 0.07, 0.6) if ln != "Reserve" else Color(0.06, 0.07, 0.06, 0.45)
+			csb.border_color = MatchManager.TEAM_COLORS[t].darkened(0.2)
+			csb.set_border_width_all(1)
+			csb.set_corner_radius_all(4)
+			csb.content_margin_left = 4
+			csb.content_margin_right = 4
+			cell.add_theme_stylebox_override("panel", csb)
+			cell.custom_minimum_size = Vector2(92, 46)
+			cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var here := []
+			for a in ar:
+				if a["fights"] and (a["men"] as Array).size() > 0 and String(a.get("wing", "")) == w and String(a.get("line", "")) == ln:
+					here.append("%s %s" % [a["name"], ABBR.get(String(a["type"]), String(a["type"]))])
+			var cl := Label.new()
+			cl.text = "  ".join(here)
+			cl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			cl.add_theme_font_size_override("font_size", 12)
+			cl.add_theme_color_override("font_color", MatchManager.TEAM_COLORS[t].lightened(0.55))
+			cell.add_child(cl)
+			grid.add_child(cell)
+	# the companies
+	_small(_pick_box, "Tap a company to send it in or stand it down. For each one going in: its wing, its line and its orders.")
+	var lost := []
+	for i in ar.size():
+		var a: Dictionary = ar[i]
+		var men := (a["men"] as Array).size()
+		if men == 0:
+			lost.append(String(a["name"]))
+			continue
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", 2)
+		_pick_box.add_child(box)
+		var b := Button.new()
+		b.toggle_mode = true
+		b.button_pressed = bool(a["fights"])
+		b.text = ("✔ " if a["fights"] else "    ") + "%s · %s · %d men" % [a["name"], a["type"], men] + ("" if a["fights"] else "  (resting)")
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.custom_minimum_size = Vector2(0, 38)
+		b.add_theme_font_size_override("font_size", 14)
+		b.focus_mode = Control.FOCUS_NONE
+		b.tooltip_text = _card_tip(a)
+		var idx := i
+		b.pressed.connect(func(): army_pick.emit(t, idx))
+		box.add_child(b)
+		if not a["fights"]:
+			continue
+		var opts := HFlowContainer.new()
+		opts.add_theme_constant_override("h_separation", 4)
+		box.add_child(opts)
+		var wob := _opt(Era.WINGS, String(a.get("wing", "Centre")))
+		wob.tooltip_text = "Wing - from your side, facing the enemy"
+		wob.item_selected.connect(func(sel: int):
+			game.set_place(t, idx, Era.WINGS[sel], "")
+			show_pick())
+		opts.add_child(wob)
+		var lob := _opt(Era.LINES, String(a.get("line", "Front")))
+		lob.tooltip_text = "Line: " + "; ".join(Era.LINES.map(func(x): return "%s - %s" % [x, Era.LINE_HELP[x]]))
+		lob.item_selected.connect(func(sel: int):
+			game.set_place(t, idx, "", Era.LINES[sel])
+			show_pick())
+		opts.add_child(lob)
+		opts.add_child(_drill_option(t, idx, a))
+	if not lost.is_empty():
+		_small(_pick_box, "Lost: " + ", ".join(lost))
+
+
+func _opt(items: Array, cur: String) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.add_theme_font_size_override("font_size", 13)
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.custom_minimum_size = Vector2(0, 36)
+	for k in items.size():
+		ob.add_item(String(items[k]))
+		if String(items[k]) == cur:
+			ob.select(k)
+	return ob
+
+
+func _drill_option(t: int, idx: int, a: Dictionary) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.add_theme_font_size_override("font_size", 13)
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.custom_minimum_size = Vector2(0, 36)
+	ob.tooltip_text = "Orders - the drill it fights by"
+	var k := 0
+	for dn in Drill.names():
+		var d: Drill = Drill.named(dn)
+		if not Era.drill_ok(d, "1640s"):
+			continue
+		ob.add_item(dn)
+		ob.set_item_tooltip(k, d.about)
+		if dn == String(a["drill"]):
+			ob.select(k)
+		k += 1
+	ob.item_selected.connect(func(sel: int):
+		game.set_company(t, idx, ob.get_item_text(sel), ""))
+	return ob
+
+
 func refresh_pick() -> void:
 	if _pick_overlay != null and _pick_overlay.visible:
 		show_pick()
@@ -1167,7 +1466,7 @@ func show_pick() -> void:
 	if camp:
 		var rno: int = int(game.campaign_round) + 1
 		var fno: int = int(game.campaign_field)
-		_pick_title.text = "Battle %d - field %d of %d, %s" % [rno, fno, front.size(), front[fno - 1]]
+		_pick_title.text = "Battle %d - draw up on field %d of %d, %s" % [rno, fno, front.size(), front[fno - 1]]
 		if epic_on:
 			_pick_title.text = "Epic battle %d - field %d of %d, %s - up to %d companies a side" % [rno, fno, front.size(), front[fno - 1], int(game.EPIC_PICK)]
 		var rl := _small(_pick_box, _round_text + "  (point here for the field)")
@@ -1188,7 +1487,7 @@ func show_pick() -> void:
 				b.pressed.connect(func(): fall_back_to.emit(n2))
 				fr.add_child(b)
 	else:
-		_pick_title.text = "Practice battle - choose who goes in and their orders"
+		_pick_title.text = "Practice battle - draw up your army"
 		_section(_pick_box, "The field")
 		var frow := HFlowContainer.new()
 		_pick_box.add_child(frow)
@@ -1245,6 +1544,16 @@ func show_pick() -> void:
 					MatchManager.TEAM_NAMES[t], n, Era.PICK, men, standing2, ar.size()])
 			else:
 				_section(_pick_box, "%s - %d companies, %d men going in" % [MatchManager.TEAM_NAMES[t], n, men])
+		if not secret and String(game.era) == "1640s":
+			if String(commanders[t]) == "computer":
+				var names := []
+				for a in ar:
+					if a["fights"] and (a["men"] as Array).size() > 0:
+						names.append("%s %s" % [a["name"], a["type"]])
+				_small(_pick_box, "The computer draws up by the book: " + ", ".join(names))
+			else:
+				_draw_up_block(t, ar)
+			continue
 		var qrow := HFlowContainer.new()
 		_pick_box.add_child(qrow)
 		if not secret:
@@ -1941,6 +2250,7 @@ func _section(parent: Control, text: String) -> void:
 	l.text = text
 	l.add_theme_font_size_override("font_size", 16)
 	l.add_theme_color_override("font_color", Color(0.9, 0.85, 0.6))
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	var sp := Control.new()
 	sp.custom_minimum_size = Vector2(0, 8)
 	parent.add_child(sp)

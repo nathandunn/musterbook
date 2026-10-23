@@ -769,6 +769,8 @@ func _default_picks(t: int, n: int = FIGHTING) -> void:
 		return na > nb or (na == nb and a < b))   # level on men: the first in the list
 	for i in ar.size():
 		ar[i]["fights"] = idx.find(i) >= 0 and idx.find(i) < n
+	if era == "1640s":
+		_redraw_if_auto(t)
 
 
 func _fielded(t: int) -> int:
@@ -813,6 +815,8 @@ func toggle_army_pick(t: int, i: int) -> void:
 			ar[i]["fights"] = false
 	elif not (ar[i]["men"] as Array).is_empty() and _fielded(t) < pick_limit():
 		ar[i]["fights"] = true
+	if era == "1640s":
+		_redraw_if_auto(t)
 	if hud != null:
 		hud.refresh_pick()
 
@@ -846,6 +850,9 @@ func pick_freshest(t: int) -> void:
 ## behind the first, slot by slot.
 func _prepare_battle(t: int) -> void:
 	var ar: Array = armies[t]
+	if hud != null and String(hud.commanders[t]) == "computer":
+		hand_drawn[t] = false
+		draw_up(t)   # the computer draws up by the book
 	var picked := []
 	for i in ar.size():
 		if ar[i]["fights"] and (ar[i]["men"] as Array).size() > 0:
@@ -876,12 +883,17 @@ func _prepare_battle(t: int) -> void:
 		co["type_name"] = a["type"]
 		co["army_i"] = picked[c]
 		co["rank"] = String(a.get("rank", "Auto"))
+		co["wing"] = String(a.get("wing", "Centre"))
+		co["line"] = String(a.get("line", "Front"))
 		cos.append(co)
 		for m in a["men"]:
 			var rec: Dictionary = (m as Dictionary).duplicate()
 			rec["co"] = c
 			roster.append(rec)
-	MatchManager.form_ranks(cos)
+	if era == "1640s":
+		MatchManager.form_positions(cos)
+	else:
+		MatchManager.form_ranks(cos)
 	manager.companies[t] = cos
 	manager.battalion_names[t] = "Army"
 	manager.rosters[t] = roster
@@ -1488,6 +1500,13 @@ func _fresh_men(t: int, i: int, type_name := "") -> Array:
 
 
 ## Every company back to full strength with new men (a new war, or a single battle after one).
+func _refresh_men_side(t: int) -> void:
+	if campaign_active:
+		return
+	for i in (armies[t] as Array).size():
+		armies[t][i]["men"] = _fresh_men(t, i)
+
+
 func _refresh_men_all() -> void:
 	for t in 2:
 		for i in (armies[t] as Array).size():
@@ -1508,11 +1527,16 @@ func set_company_men(n: int) -> void:
 func fill_army(t: int, bname: String) -> void:
 	if Era.ARMIES.has(bname):
 		var arm: Array = Era.ARMIES[bname]
+		_resize_side(t, arm.size())
 		for i in (armies[t] as Array).size():
 			var e: Array = arm[i % arm.size()]
 			set_company(t, i, String(e[0]), String(e[1]))
 			armies[t][i]["rank"] = "Auto"
 		army_names[t] = bname
+		_refresh_men_side(t)
+		balanced_picks(t, Era.PICK)
+		hand_drawn[t] = false
+		draw_up(t)
 		return
 	var spec: Array = MatchManager.BATTALIONS.get(bname, [])
 	if spec.is_empty():
@@ -1548,15 +1572,177 @@ func set_era(e: String) -> void:
 ## Grow (copying the last company) or trim each army to n companies.
 func _resize_armies(n: int) -> void:
 	for t in 2:
-		var ar: Array = armies[t]
-		while ar.size() > n:
-			ar.pop_back()
-		while ar.size() < n:
-			var src: Dictionary = ar[ar.size() - 1]
-			var i := ar.size()
-			ar.append({"name": Era.LETTERS[i], "drill": src["drill"], "type": src["type"], "type_obj": (src["type_obj"] as SoldierType).copy(),
-				"men": [], "fights": false, "rank": "Auto"})
-			ar[i]["men"] = _fresh_men(t, i)
+		_resize_side(t, n)
+
+
+func _resize_side(t: int, n: int) -> void:
+	var ar: Array = armies[t]
+	while ar.size() > n:
+		ar.pop_back()
+	while ar.size() < n:
+		var i := ar.size()
+		var tn: String = String(ar[i - 1]["type"]) if i > 0 else "Musketeer"
+		ar.append({"name": Era.LETTERS[i], "drill": Era.DEFAULT_DRILL.get(tn, "Shot"), "type": tn, "type_obj": SoldierType.preset(tn),
+			"men": [], "fights": false, "rank": "Auto"})
+		ar[i]["men"] = _fresh_men(t, i)
+
+
+# ---------------------------------------------------------------- the shop (Musterbook)
+# An army is bought like a basket: so many companies of each type, up to twenty, within the money.
+# The companies are kept in the shop's order and lettered A, B, C... after every change.
+
+var hand_drawn := [false, false]   # true once the side has moved a company by hand: then picks no longer redraw
+
+
+func cart_count(t: int, tn: String) -> int:
+	var n := 0
+	for a in armies[t]:
+		if String(a["type"]) == tn:
+			n += 1
+	return n
+
+
+## What one more company of this type would cost the side, in pence.
+func company_price(t: int, tn: String) -> int:
+	return int(Kit.company_cost(tn, SoldierType.men_for(tn, COMPANY_MEN), int(days[t]), manager.ration_of(t))["total"])
+
+
+func can_buy(t: int, tn: String) -> bool:
+	return not campaign_active and (armies[t] as Array).size() < Era.COMPANIES \
+		and int(muster_cost(t)["total"]) + company_price(t, tn) <= budget_pence(t)
+
+
+func cart_add(t: int, tn: String) -> bool:
+	if not can_buy(t, tn):
+		return false
+	armies[t].append({"name": "", "drill": Era.DEFAULT_DRILL.get(tn, "Shot"), "type": tn, "type_obj": SoldierType.preset(tn),
+		"men": [], "fights": false, "rank": "Auto"})
+	_after_cart(t)
+	return true
+
+
+func cart_remove(t: int, tn: String) -> bool:
+	if campaign_active:
+		return false
+	var ar: Array = armies[t]
+	for i in range(ar.size() - 1, -1, -1):
+		if String(ar[i]["type"]) == tn:
+			ar.remove_at(i)
+			_after_cart(t)
+			return true
+	return false
+
+
+func cart_clear(t: int) -> void:
+	if campaign_active:
+		return
+	armies[t] = []
+	army_names[t] = ""
+
+
+## A famous army, trimmed from the end until the side can pay for it.
+func fill_army_within(t: int, bname: String) -> void:
+	fill_army(t, bname)
+	while over_budget(t) and (armies[t] as Array).size() > 1:
+		armies[t].pop_back()
+	_after_cart(t)
+	army_names[t] = bname
+
+
+func _after_cart(t: int) -> void:
+	var ar: Array = armies[t]
+	var order := Era.TYPES_1640
+	var idx := range(ar.size())
+	idx.sort_custom(func(x, y):
+		var ox: int = order.find(String(ar[x]["type"]))
+		var oy: int = order.find(String(ar[y]["type"]))
+		return ox < oy or (ox == oy and x < y))
+	var sorted := []
+	for i in idx:
+		sorted.append(ar[i])
+	armies[t] = sorted
+	for i in sorted.size():
+		sorted[i]["name"] = Era.LETTERS[i]
+		sorted[i]["men"] = _fresh_men(t, i)
+	army_names[t] = ""
+	balanced_picks(t, Era.PICK)
+	hand_drawn[t] = false
+	draw_up(t)
+
+
+## Put forward up to n companies in the proportions of the whole army (largest remainders), the
+## freshest of each type first - so ten from a Swedish brigade bring their horse and gun too.
+func balanced_picks(t: int, n: int) -> void:
+	var ar: Array = armies[t]
+	var by_type := {}
+	var total := 0
+	for i in ar.size():
+		ar[i]["fights"] = false
+		if (ar[i]["men"] as Array).is_empty():
+			continue
+		var tn := String(ar[i]["type"])
+		if not by_type.has(tn):
+			by_type[tn] = []
+		by_type[tn].append(i)
+		total += 1
+	if total == 0:
+		return
+	n = mini(n, total)
+	var share := {}
+	var rem := []
+	var given := 0
+	for tn in by_type:
+		var exact := float(n) * float((by_type[tn] as Array).size()) / float(total)
+		share[tn] = int(floor(exact))
+		given += int(share[tn])
+		rem.append([exact - floor(exact), tn])
+	rem.sort_custom(func(x, y): return float(x[0]) > float(y[0]))
+	var k := 0
+	while given < n and k < rem.size():
+		share[rem[k][1]] = int(share[rem[k][1]]) + 1
+		given += 1
+		k += 1
+	for tn in by_type:
+		var idx: Array = by_type[tn]
+		idx.sort_custom(func(x, y): return (ar[x]["men"] as Array).size() > (ar[y]["men"] as Array).size())
+		for j in mini(int(share[tn]), idx.size()):
+			ar[idx[j]]["fights"] = true
+
+
+## Draw up the companies going in by the book (the others keep where they were).
+func draw_up(t: int) -> void:
+	var ar: Array = armies[t]
+	var picked := []
+	var types := []
+	for i in ar.size():
+		if ar[i]["fights"] and (ar[i]["men"] as Array).size() > 0:
+			picked.append(i)
+			types.append(String(ar[i]["type"]))
+	var pos := Era.draw_up(types)
+	for k in picked.size():
+		ar[picked[k]]["wing"] = pos[k][0]
+		ar[picked[k]]["line"] = pos[k][1]
+	for a in ar:
+		if not a.has("wing"):
+			var p: Array = Era.draw_up([String(a["type"])])[0]
+			a["wing"] = p[0]
+			a["line"] = p[1]
+
+
+## Put a company somewhere by hand ("" leaves that part as it is).
+func set_place(t: int, i: int, wing: String, line: String) -> void:
+	var a: Dictionary = armies[t][i]
+	if wing != "":
+		a["wing"] = wing
+	if line != "":
+		a["line"] = line
+	hand_drawn[t] = true
+
+
+## After the picks change: draw up again, unless the side has placed companies by hand.
+func _redraw_if_auto(t: int) -> void:
+	if not bool(hand_drawn[t]):
+		draw_up(t)
 
 
 ## The muster roll's bill for a side: every company raised at full strength, for its days in the
@@ -1723,56 +1909,62 @@ func _ui_walk() -> void:
 func _ui_walk_1640() -> void:
 	hud.show_start()
 	await _shot("p_start")
-	set_era("1640s")
-	hud.open_setup("test")
+	hud._close_overlays()
+	hud.open_setup("Fill your basket")
+	cart_clear(0)
+	for tn in ["Musketeer", "Musketeer", "Musketeer", "Musketeer", "Pikeman", "Pikeman", "Harquebusier", "Harquebusier", "Saker", "Archer", "Dragoon", "Pike and shot"]:
+		var ok := cart_add(0, tn)
+		if not ok:
+			print("could not buy ", tn)
+	cart_remove(0, "Archer")
 	hud.refresh_setup()
-	await _shot("p_setup")
-	var c0: Dictionary = muster_cost(0)
-	print("1640s muster: red %s of %s, blue %s of %s; red A %s/%s" % [Kit.pounds(int(c0["total"])), Kit.pounds(budget_pence(0)),
-		Kit.pounds(int(muster_cost(1)["total"])), Kit.pounds(budget_pence(1)), armies[0][0]["drill"], armies[0][0]["type"]])
-	budget[0] = 3000
-	hud.refresh_setup()
-	print("over budget at £3000: %s, blocks: %s" % [over_budget(0), hud._budget_blocks()])
-	await _shot("p_over")
+	var names := []
+	for x in armies[0]:
+		names.append("%s %s %s/%s %s" % [x["name"], x["type"], x.get("wing", "?"), x.get("line", "?"), x["fights"]])
+	print("basket: ", names)
+	print("cost %s of %s; can buy a hussar: %s" % [Kit.pounds(int(muster_cost(0)["total"])), Kit.pounds(budget_pence(0)), can_buy(0, "Hussar")])
+	await _shot("p_shop")
+	hud._setup_scroll.scroll_vertical = 2000
+	await _shot("p_shop2")
+	# buy until the purse is empty
+	var n := 0
+	while cart_add(0, "Cuirassier"):
+		n += 1
+	print("cuirassiers until the money ran out: %d, total %d companies, over %s" % [n, (armies[0] as Array).size(), over_budget(0)])
+	fill_army_within(0, "Swedish brigade")
+	print("Swedish brigade within £%d: %d companies" % [budget[0], (armies[0] as Array).size()])
+	budget[0] = 6000
+	fill_army_within(0, "Swedish brigade")
+	print("Swedish brigade within £6000: %d companies, over %s" % [(armies[0] as Array).size(), over_budget(0)])
 	budget[0] = Era.DEFAULT_BUDGET
-	hud._setup_note.visible = false
-	fill_army(1, "Cavalier horse")
-	hud.refresh_setup()
+	fill_army_within(0, "Swedish brigade")
+	hud._close_overlays()
 	hud.show_pick()
-	for i in [0, 1, 2, 3, 8]:
-		if not armies[0][i]["fights"]:
-			toggle_army_pick(0, i)
-	await _shot("p_pick")
+	await _shot("p_draw")
+	# move one by hand: then picks no longer redraw
+	set_place(0, 0, "Right", "Second")
+	hud.show_pick()
+	hud._pick_scroll.scroll_vertical = 600
+	await _shot("p_draw2")
 	hud.new_match_requested.emit()
-	print("battle: %d v %d men; red types %s; blue types %s" % [manager.side_total(0), manager.side_total(1), manager._types_label(0), manager._types_label(1)])
-	await get_tree().create_timer(2.0).timeout
-	await _shot("p_battle0")
-	var looks := [[10.0, 14.0], [22.0, 11.0], [34.0, 16.0], [48.0, 30.0]]
-	for lk in looks:
-		await get_tree().create_timer(float(lk[0]) - manager.elapsed if float(lk[0]) > manager.elapsed else 0.5).timeout
-		# look where the fighting is: the red man nearest an enemy
-		var best: Soldier = null
-		var bd := INF
-		for sd in manager.alive_soldiers():
-			if sd.team != 0:
-				continue
-			var en: Soldier = manager.nearest_enemy_any(sd)
-			if en != null and sd.global_position.distance_to(en.global_position) < bd:
-				bd = sd.global_position.distance_to(en.global_position)
-				best = sd
-		if best != null:
-			cam._focus = best.global_position
-			cam.fit_all = false
-		cam.dist = float(lk[1])
-		await get_tree().create_timer(0.6).timeout
-		await _shot("p_battle%d" % int(lk[0]))
+	await get_tree().create_timer(0.5).timeout
+	for t in 2:
+		var rows := []
+		for c in (manager.companies[t] as Array).size():
+			var co: Dictionary = manager.companies[t][c]
+			rows.append("%s %s %s x=%.0f d=%.0f" % [co["name"], co["type_name"], co["slot"], manager.band_x(t, c), float(co.get("depth", 0.0))])
+		print("side %d: %s" % [t, rows])
+	cam.fit_all = true
+	await get_tree().create_timer(3.0).timeout
+	await _shot("p_battle")
+	await get_tree().create_timer(20.0).timeout
+	await _shot("p_battle20")
 	print("at %d s: %d v %d standing" % [int(manager.elapsed), manager.alive_count(0), manager.alive_count(1)])
-	# a 1640s campaign against the computer: it raises an army it can pay for
 	hud.commanders[1] = "computer"
 	hud.campaign_requested.emit()
 	await get_tree().create_timer(0.5).timeout
-	print("campaign: blue %s (%s), over budget %s; red over budget %s; blue picks %d" % [army_names[1], _ai_reason[1], over_budget(1), over_budget(0), _fielded(1)])
-	await _shot("p_campaign")
+	print("war: blue %s, %d companies; red %d companies" % [_ai_reason[1], (armies[1] as Array).size(), (armies[0] as Array).size()])
+	await _shot("p_war_draw")
 	get_tree().quit()
 
 
