@@ -1,0 +1,30 @@
+# The owner's first drill (2026-09-29). Sneak up under cover, ready the weapon, strike from the
+# flank; if seen far off, melt away; if seen close, shoot first; go in when the enemy wavers.
+# Retuned 2026-10-05 after trials: the ambush starts at 25 m (it was 12), the smoke is used to
+# close in, and melting away is kept for long range only. With the Shinobi type: 6-154 became 55-105.
+# 2026-10-06 (owner): ninjas go round behind the enemy's line and strike it from the rear, where
+# the men are all looking the other way - a blow from behind on a man who never saw it coming
+# nearly always kills.
+drill "Ninjas"
+about "Go wide round the end of the enemy's line and in behind it, unseen. From behind: the blade - men looking ahead never see it coming. Seen close: shoot first. The running are cut down."
+type Shinobi
+dials aggression 0.55 discipline 0.25 cohesion 0.10 cover 1.00 patience 0.90 nerve 0.70
+
+sergeant:
+  when enemy breaking or enemy broken                  -> charge
+  when losing the exchange                             -> fall back 25; find cover; form skirmish
+  otherwise                                            -> advance slow; form skirmish; hold fire
+
+man:
+  # the enemy wavers or runs: everyone goes in
+  when ( enemy breaking or enemy broken or enemy losses over 40% ) and enemy within 40 -> charge
+  # men of theirs running: cut them down
+  when enemy running nearby and enemy within 40        -> charge
+  # in behind their line: the blade, in their backs
+  when behind the enemy and enemy within 35            -> charge
+  when enemy within 6                                  -> charge
+  # caught on the way round: shoot first, then keep going
+  when spotted and loaded and enemy within 20          -> fire
+  when not loaded and not spotted and enemy beyond 40  -> reload kneeling
+  # out round the end of their line and in behind it
+  otherwise                                            -> go round 15

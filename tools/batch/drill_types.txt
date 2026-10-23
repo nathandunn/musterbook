@@ -1,0 +1,16 @@
+Regulars|Even
+Skirmishers|Marksman
+Shock|Grenadier
+Militia|Even
+Veterans|Ironside
+Thin Red Line|Marksman
+Fabian Screen|Marksman
+Ninjas|Shinobi
+Sniper|Marksman
+Linebreaker|Grenadier
+Line|Even
+Anvil|Marksman
+Hammer|Brawler
+Patient Line|Even
+Artillery|Gunner
+Cavalry|Cavalry
